@@ -2,8 +2,6 @@ const dotenv = require("dotenv");
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
-const Tool = require("./Model/tools")
-const axios = require("axios"); 
 
 dotenv.config();
 const app = express();
