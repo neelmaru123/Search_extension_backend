@@ -1,36 +1,7 @@
-import dotenv from "dotenv";
-import express from "express";
-import mongoose from "mongoose";
-import cors from "cors";
-import { pipeline } from "@xenova/transformers";
-import axios from "axios";
-dotenv.config();
-const app = express();
-app.use(express.json());
-app.use(cors());
+const Tool = require("../Model/tools")
+const axios = require("axios");
 
-mongoose.connect("mongodb+srv://neelmaru63:neelmaru63@cluster0.5xgzbmr.mongodb.net/Ai_tools_assistent?retryWrites=true&w=majority&appName=Cluster0")
-    .then(() => console.log("MongoDB Connected"))
-    .catch(err => console.log(err));
-
-const Tool = mongoose.model("Tool", new mongoose.Schema({
-    category: String,
-    keywords: [String],
-    embedding: [Number], // Vector embedding
-    tools: [{ name: String, icon: String, link: String, description: String }],
-}));
-
-// Function to calculate cosine similarity
-function cosineSimilarity(vecA, vecB) {
-    if (vecA.length !== vecB.length) return 0;
-    const dotProduct = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
-    const normA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
-    const normB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
-    return dotProduct / (normA * normB);
-}
-
-// API to fetch tools based on user search
-app.post("/get-tools", async (req, res) => {
+const getTools = async (req, res) => {
     const query = req.body.query;
     const searchEmbedding = await generateEmbedding(query);
 
@@ -85,16 +56,18 @@ Ensure the recommended tools are highly relevant, widely used, and among the bes
     );
 
     const tools = await parseToolsAndCategory(response.data.choices[0].message.content);
+
+    console.log(tools);
     
-    if(tools.tools.length === 0) {
+    if (tools.tools.length === 0) {
         return res.json({ message: "No tools found for this query!" });
     }
 
-    if(tools.category === "") {
+    if (tools.category === "") {
         return res.json({ message: "Category not found!" });
     }
 
-    if(tools.embedding.length === 0) {
+    if (tools.embedding.length === 0) {
         return res.json({ message: "Embedding not found!" });
     }
 
@@ -102,42 +75,58 @@ Ensure the recommended tools are highly relevant, widely used, and among the bes
     // const newToolData = { category, embedding: categoryEmbedding, keywords: [query], tools };
     await Tool.create(tools);
     res.json(tools);
-});
+}
 
-app.delete("/delete-tools", async (req, res) => {
-    await Tool.deleteMany({category: req.body.category});
+const deleteTools = async (req, res) => {
+    await Tool.deleteMany({ category: req.body.category });
     res.json({ message: "All tools deleted successfully!" });
-});
+}
+
+/* ------- Other Functions ------- */
+function cosineSimilarity(vecA, vecB) {
+    if (vecA.length !== vecB.length) return 0;
+    const dotProduct = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
+    const normA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
+    const normB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
+    return dotProduct / (normA * normB);
+}
 
 async function parseToolsAndCategory(responseContent) {
     const lines = responseContent.split("\n").map(line => line.trim()).filter(line => line !== "");
 
-    // Extract category from the first line
-    const categoryMatch = lines[0].match(/^Category:\s*(.+)/);
-    const category = categoryMatch ? categoryMatch[1].trim() : "Unknown Category";
+    // Attempt to extract category from the first line (optional)
+    let category = "Unknown Category";
+    if (lines[0].startsWith("Category:")) {
+        category = lines.shift().replace("Category:", "").trim();
+    }
 
-    // Extract tools from the next three lines
-    const tools = lines.slice(1, 4).map(line => {
-        const nameMatch = line.match(/^\d+\.?\s*(.*?)\s🛠/); // Extract tool name without leading number
-        const iconMatch = line.match(/🛠\s(https?:\/\/[^\s]+)\s🔗/); // Extract icon URL
-        const linkMatch = line.match(/🔗\s(https?:\/\/[^\s]+)/); // Extract website link
-        const descriptionMatch = line.split(" - ").slice(1).join(" - ").trim();
+    // Extract tools
+    const tools = lines.map(line => {
+        const nameMatch = line.match(/^(.*?)\s*🛠/); // Extract tool name before
+        const iconMatch = line.match(/🛠\s*(https?:\/\/[^\s]+)\s*/); // Extract icon URL
+        const linkMatch = line.match(/🔗\s*(https?:\/\/[^\s]+)/); // Extract website link
+        const descriptionMatch = line.split(" - ").slice(1).join(" - ").trim(); // Extract description
 
         if (!nameMatch || !linkMatch) return null; // Skip invalid lines
 
         return {
             name: nameMatch[1].trim(),
             link: linkMatch[1].trim(),
-            icon: `https://www.google.com/s2/favicons?sz=64&domain=${new URL(linkMatch[1].trim()).hostname}`,
+            icon: iconMatch ? iconMatch[1].trim() : `https://www.google.com/s2/favicons?sz=64&domain=${new URL(linkMatch[1].trim()).hostname}`,
             description: descriptionMatch || ""
         };
     }).filter(Boolean);
 
     // Convert category name to embedding
     const embedding = await generateEmbedding(category);
-
     return { category, tools, embedding };
 }
+
+let pipeline;
+(async () => {
+    const transformers = await import("@xenova/transformers");
+    pipeline = transformers.pipeline;
+})();
 
 async function generateEmbedding(text) {
     const extractor = await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2");
@@ -145,6 +134,7 @@ async function generateEmbedding(text) {
     return Array.isArray(embedding.data) ? [...embedding.data] : Object.values(embedding.data);
 }
 
-// Start Server
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+module.exports = {
+    getTools, deleteTools
+}
+
